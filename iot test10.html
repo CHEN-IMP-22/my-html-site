@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensor Data</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 24 px;
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        h2 {
+            font-size: 18px;
+            font-weight: normal;
+            margin: 0px;
+            text-align: center;
+        }
+
+        .chart-title {
+            font-size: 13px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .chart-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 100px;
+            width: 100%;
+            max-width: 2000px;
+        }
+
+        .chart-box {
+            background: #FBFCFC;
+            width: 100%;
+            height: 500px;
+            padding: 10px 30px 30px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        canvas {
+            width: 100%; 
+            height: 100%;
+        }
+
+        @media (max-width: 600px) {
+            .chart-box {
+                padding: 50px;
+            }
+        }
+    </style>
+    <script>
+        let charts = {};
+
+        async function fetchInfluxData() {
+            const org = "IoTProject";
+            const bucket = "node-red";
+            const url = `https://eu-central-1-1.aws.cloud2.influxdata.com/api/v2/query?org=${org}`;
+            const token = "zNCFBPPJzHGz4mTAXe0W9GPf-yjyJndooj0Tfg8AqX23Jz3SSf2lnuDEiC3WMboTYXtT-DEVR9_IfYAs6kp6ig==";
+            const query = `
+                from(bucket: "${bucket}")
+                |> range(start: -30m)
+                |> filter(fn: (r) => r["_measurement"] == "sensor value")
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> keep(columns: ["_time", "Nora/DHT/Humidity", "Nora/DHT/Temp", "Nora/lightintensity"])
+                |> sort(columns: ["_time"])
+            `;
+
+            try {
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Token ${token}`,
+                        "Content-Type": "application/vnd.flux",
+                        "Accept": "application/csv"
+                    },
+                    body: query
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.text();
+                const rows = data.split("\n").filter(row => row.trim().length > 0);
+                let headers = rows[0].split(",").map(header => header.trim());
+                const body = rows.slice(1).map(row => row.split(","));
+
+                const timeIndex = headers.indexOf("_time");
+                const humidityIndex = headers.indexOf("Nora/DHT/Humidity");
+                const tempIndex = headers.indexOf("Nora/DHT/Temp");
+                const lightIndex = headers.indexOf("Nora/lightintensity");
+
+                const time = [];
+                const humidity = [];
+                const temp = [];
+                const light = [];
+
+                body.forEach(row => {
+                    time.push(new Date(row[timeIndex]).toLocaleTimeString());
+                    humidity.push(parseFloat(row[humidityIndex]));
+                    temp.push(parseFloat(row[tempIndex]));
+                    light.push(parseFloat(row[lightIndex]));
+                });
+
+                updateChart("Humidity", "humidityChart", time, humidity, "#85929E");
+                updateChart("Temperature", "tempChart", time, temp, "#17A589");
+                updateChart("Light Intensity", "lightChart", time, light, "#7FB3D5");
+
+            } catch (error) {
+                console.error("Error fetching InfluxDB data:", error);
+            }
+        }
+
+        function updateChart(title, canvasId, labels, data, color) {
+            if (charts[canvasId]) {
+                charts[canvasId].data.labels = labels;
+                charts[canvasId].data.datasets[0].data = data;
+                charts[canvasId].update();
+            } else {
+                const ctx = document.getElementById(canvasId).getContext("2d");
+                charts[canvasId] = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: title,
+                            data: data,
+                            borderColor: color,
+                            fill: false,
+                            pointRadius: 1,
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false,
+                            }
+                        },
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Time',
+                                    font: {
+                                        size: 16
+                                    }
+                                },
+                                ticks: {
+                                    font: {
+                                        size: 13
+                                    }
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: title,
+                                    font: {
+                                        size: 16
+                                    }
+                                },
+                                ticks: {
+                                    font: {
+                                        size: 13
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            fetchInfluxData();
+            setInterval(fetchInfluxData, 10000); // 每分钟刷新一次
+        });
+    </script>
+</head>
+<body>
+    <h1>Sensor Data</h1>
+    <div class="chart-container">
+        <div class="chart-box">
+            <h2>Humidity</h2>
+            <canvas id="humidityChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <h2>Temperature</h2>
+            <canvas id="tempChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <h2>Light Intensity</h2>
+            <canvas id="lightChart"></canvas>
+        </div>
+    </div>
+</body>
+</html>
